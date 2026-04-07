@@ -1,0 +1,6 @@
+Pattern_recognition_cu/.idea
+Pattern_recognition_cu/cmake-build-debug
+Pattern_recognition_cu/cmake-build-release
+Pattern_recognition_cu/main-FFT.cu
+
+realistic_data.csv
