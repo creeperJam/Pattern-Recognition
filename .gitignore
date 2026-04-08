@@ -1,6 +1,7 @@
 .idea
 cmake-build-debug/
 cmake-build-release/
+Pattern_recognition_cu/output/*
 main-FFT.cu
 
 realistic_data.csv
