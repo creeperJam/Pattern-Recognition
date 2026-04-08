@@ -6,15 +6,18 @@
 #include <vector>
 #include <string>
 #include <cmath>
+#include <limits>
 #include <cuda_runtime.h>
 #include <random>
 
-// La mia RTX 4060 ha 64 KiB di memoria costante, quindi i limiti sulle dimensioni e numero di query devono rispettare questi limiti:
-// QUERY_LENGTH * NUM_QUERIES * sizeof(float) * numero_dati(5 in questo caso) <= 65536, QUINDI:
-// QUERY_LENGTH * NUM_QUERIES <= 3276 (approssimato per difetto)
-constexpr int QUERY_LENGTH = 256;
-constexpr int NUM_QUERIES = 4;
-constexpr double NUM_RUNS = 100.0f;
+// TODO: Split every part into function for readability
+
+// My RTX 4060 has 64 KiB of constant memory, meaning that query length and number have to respect the following limit:
+// QUERY_LENGTH * NUM_QUERIES * sizeof(float) * COLUMNS_NUMBER(5 in this case) <= 65536, so:
+// QUERY_LENGTH * NUM_QUERIES <= 3276 (approx.)
+constexpr int QUERY_LENGTH = 819; // MAX: 3276 - Limited by constant and shared memory size (99 KiB shared = 101376 B => (4812+256) * 5 * 4 = 101376, with 4813 we'd go over this limit). ACTUAL LIMIT IS 3276 DUE TO CONSTANT MEMORY SIZE
+constexpr int NUM_QUERIES = 4;     // MAX: 3276 / QUERY_LENGTH
+constexpr int NUM_RUNS = 100.0f;
 constexpr int NUM_WARMUP = 10;
 constexpr int TOTAL_QUERY_ELEMENTS = QUERY_LENGTH * NUM_QUERIES;
 
@@ -42,57 +45,85 @@ struct data_SoA {
 
 __global__ void search_multiple_patterns_kernel(
     const float* __restrict__ d_h1, const float* __restrict__ d_h2, const float* __restrict__ d_h3, const float* __restrict__ d_h4, const float* __restrict__ d_h5,
-    float* __restrict__ d_results, int total_elements)
+    float* __restrict__ d_results_c1,
+    float* __restrict__ d_results_c2,
+    float* __restrict__ d_results_c3,
+    float* __restrict__ d_results_c4,
+    float* __restrict__ d_results_c5,
+    int total_elements)
 {
+    extern __shared__ float s_data[];
     constexpr int BLOCK_SIZE = 256;
     constexpr int SHARED_SIZE = BLOCK_SIZE + QUERY_LENGTH;
 
-    __shared__ float s_h1[SHARED_SIZE];
-    __shared__ float s_h2[SHARED_SIZE];
-    __shared__ float s_h3[SHARED_SIZE];
-    __shared__ float s_h4[SHARED_SIZE];
-    __shared__ float s_h5[SHARED_SIZE];
+    float* s_h1 = s_data;
+    float* s_h2 = &s_data[SHARED_SIZE];
+    float* s_h3 = &s_data[SHARED_SIZE * 2];
+    float* s_h4 = &s_data[SHARED_SIZE * 3];
+    float* s_h5 = &s_data[SHARED_SIZE * 4];
+
+    // __shared__ float s_h1[SHARED_SIZE];
+    // __shared__ float s_h2[SHARED_SIZE];
+    // __shared__ float s_h3[SHARED_SIZE];
+    // __shared__ float s_h4[SHARED_SIZE];
+    // __shared__ float s_h5[SHARED_SIZE];
 
     int tid_x = blockIdx.x * blockDim.x + threadIdx.x;
     int tid_y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (tid_x < total_elements) {
-        s_h1[threadIdx.x] = d_h1[tid_x];
-        s_h2[threadIdx.x] = d_h2[tid_x];
-        s_h3[threadIdx.x] = d_h3[tid_x];
-        s_h4[threadIdx.x] = d_h4[tid_x];
-        s_h5[threadIdx.x] = d_h5[tid_x];
-    }
+    for (int i = threadIdx.x; i < SHARED_SIZE; i += blockDim.x) {
+        int global_idx = blockIdx.x * blockDim.x + i;
 
-    if (threadIdx.x < QUERY_LENGTH - 1) {
-        int halo_index_global = tid_x + BLOCK_SIZE;
-
-        if (halo_index_global < total_elements) {
-            s_h1[threadIdx.x + BLOCK_SIZE] = d_h1[halo_index_global];
-            s_h2[threadIdx.x + BLOCK_SIZE] = d_h2[halo_index_global];
-            s_h3[threadIdx.x + BLOCK_SIZE] = d_h3[halo_index_global];
-            s_h4[threadIdx.x + BLOCK_SIZE] = d_h4[halo_index_global];
-            s_h5[threadIdx.x + BLOCK_SIZE] = d_h5[halo_index_global];
+        if (global_idx < total_elements) {
+            s_h1[i] = d_h1[global_idx];
+            s_h2[i] = d_h2[global_idx];
+            s_h3[i] = d_h3[global_idx];
+            s_h4[i] = d_h4[global_idx];
+            s_h5[i] = d_h5[global_idx];
+        } else {
+            s_h1[i] = 0.0f;
+            s_h2[i] = 0.0f;
+            s_h3[i] = 0.0f;
+            s_h4[i] = 0.0f;
+            s_h5[i] = 0.0f;
         }
     }
 
     __syncthreads();
 
     if (tid_x <= total_elements - QUERY_LENGTH && tid_y < NUM_QUERIES) {
-        float total_sad = 0.0f;
+        float sad_c1 = 0.0f;
+        float sad_c2 = 0.0f;
+        float sad_c3 = 0.0f;
+        float sad_c4 = 0.0f;
+        float sad_c5 = 0.0f;
         int q_start = tid_y * QUERY_LENGTH;
 
         #pragma unroll
         for (int i = 0; i < QUERY_LENGTH; i++) {
-            total_sad += fabs(s_h1[threadIdx.x + i] - c_q1[q_start + i]);
-            total_sad += fabs(s_h2[threadIdx.x + i] - c_q2[q_start + i]);
-            total_sad += fabs(s_h3[threadIdx.x + i] - c_q3[q_start + i]);
-            total_sad += fabs(s_h4[threadIdx.x + i] - c_q4[q_start + i]);
-            total_sad += fabs(s_h5[threadIdx.x + i] - c_q5[q_start + i]);
+            sad_c1 += fabs(s_h1[threadIdx.x + i] - c_q1[q_start + i]);
+            sad_c2 += fabs(s_h2[threadIdx.x + i] - c_q2[q_start + i]);
+            sad_c3 += fabs(s_h3[threadIdx.x + i] - c_q3[q_start + i]);
+            sad_c4 += fabs(s_h4[threadIdx.x + i] - c_q4[q_start + i]);
+            sad_c5 += fabs(s_h5[threadIdx.x + i] - c_q5[q_start + i]);
         }
 
-        d_results[tid_y * total_elements + tid_x] = total_sad;
+        const int out_idx = tid_y * total_elements + tid_x;
+        d_results_c1[out_idx] = sad_c1;
+        d_results_c2[out_idx] = sad_c2;
+        d_results_c3[out_idx] = sad_c3;
+        d_results_c4[out_idx] = sad_c4;
+        d_results_c5[out_idx] = sad_c5;
     }
+}
+
+float portable_uniform(std::mt19937& eng) {
+    uint32_t raw_value = eng();
+
+    uint32_t max_value = std::mt19937::max(); // Per mt19937 è 4294967295
+    float normalized = static_cast<float>(raw_value) / static_cast<float>(max_value);
+
+    return normalized * 15.0f;
 }
 
 int main() {
@@ -181,11 +212,14 @@ int main() {
         std::size_t offset = static_cast<std::size_t>(q) * static_cast<std::size_t>(QUERY_LENGTH);
 
         for (int i = 0; i < QUERY_LENGTH; ++i) {
-            all_queries_c1[offset + i] = loaded_data.c1[base_idx + i] + noise(generator);
-            all_queries_c2[offset + i] = loaded_data.c2[base_idx + i] + noise(generator);
-            all_queries_c3[offset + i] = loaded_data.c3[base_idx + i] + noise(generator);
-            all_queries_c4[offset + i] = loaded_data.c4[base_idx + i] + noise(generator);
-            all_queries_c5[offset + i] = loaded_data.c5[base_idx + i] + noise(generator);
+            all_queries_c1[offset + i] = loaded_data.c1[base_idx + i] + portable_uniform(generator);
+            all_queries_c2[offset + i] = loaded_data.c2[base_idx + i] + portable_uniform(generator);
+            all_queries_c3[offset + i] = loaded_data.c3[base_idx + i] + portable_uniform(generator);
+            all_queries_c4[offset + i] = loaded_data.c4[base_idx + i] + portable_uniform(generator);
+            all_queries_c5[offset + i] = loaded_data.c5[base_idx + i] + portable_uniform(generator);
+            if (q == 0) {
+                std::cout << all_queries_c1[i] << " ==> ";
+            }
         }
     }
 
@@ -194,7 +228,11 @@ int main() {
     float *d_h3;
     float *d_h4;
     float *d_h5;
-    float *d_results;
+    float *d_results_c1;
+    float *d_results_c2;
+    float *d_results_c3;
+    float *d_results_c4;
+    float *d_results_c5;
 
     cudaMalloc(&d_h1, total_elements * sizeof(float));
     cudaMalloc(&d_h2, total_elements * sizeof(float));
@@ -202,7 +240,11 @@ int main() {
     cudaMalloc(&d_h4, total_elements * sizeof(float));
     cudaMalloc(&d_h5, total_elements * sizeof(float));
 
-    cudaMalloc(&d_results, total_elements * sizeof(float) * NUM_QUERIES);
+    cudaMalloc(&d_results_c1, total_elements * sizeof(float) * NUM_QUERIES);
+    cudaMalloc(&d_results_c2, total_elements * sizeof(float) * NUM_QUERIES);
+    cudaMalloc(&d_results_c3, total_elements * sizeof(float) * NUM_QUERIES);
+    cudaMalloc(&d_results_c4, total_elements * sizeof(float) * NUM_QUERIES);
+    cudaMalloc(&d_results_c5, total_elements * sizeof(float) * NUM_QUERIES);
 
     cudaMemcpy(d_h1, loaded_data.c1.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_h2, loaded_data.c2.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
@@ -224,10 +266,17 @@ int main() {
             (NUM_QUERIES + threadsPerBlock.y - 1) / threadsPerBlock.y,
             1
         );
+        int shared_bytes_needed = 5 * (256 + QUERY_LENGTH) * sizeof(float);
 
-        search_multiple_patterns_kernel<<<blocksPerGrid, threadsPerBlock>>>(
+        cudaFuncSetAttribute(
+            search_multiple_patterns_kernel,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            shared_bytes_needed
+        );
+
+        search_multiple_patterns_kernel<<<blocksPerGrid, threadsPerBlock, shared_bytes_needed>>>(
             d_h1, d_h2, d_h3, d_h4, d_h5,
-            d_results,
+            d_results_c1, d_results_c2, d_results_c3, d_results_c4, d_results_c5,
             total_elements);
         // cudaError_t err = cudaGetLastError();
         // if (err != cudaSuccess) {
@@ -238,10 +287,14 @@ int main() {
         cudaDeviceSynchronize();
     }
 
-    std::vector<float> h_results(total_elements * NUM_QUERIES);
-    std::vector<int> last_best_indices(NUM_QUERIES, -1);
-    std::vector<float> min_sads(NUM_QUERIES);
-    std::vector<int> best_indices(NUM_QUERIES);
+    std::vector<float> h_results_c1(total_elements * NUM_QUERIES);
+    std::vector<float> h_results_c2(total_elements * NUM_QUERIES);
+    std::vector<float> h_results_c3(total_elements * NUM_QUERIES);
+    std::vector<float> h_results_c4(total_elements * NUM_QUERIES);
+    std::vector<float> h_results_c5(total_elements * NUM_QUERIES);
+    std::vector<int> last_best_indices(NUM_QUERIES * 5, -1);
+    std::vector<float> min_sads(NUM_QUERIES * 5);
+    std::vector<int> best_indices(NUM_QUERIES * 5);
 
     for (int i = 0; i < NUM_RUNS; ++i) {
         std::fill(min_sads.begin(), min_sads.end(), std::numeric_limits<float>::max());
@@ -252,52 +305,83 @@ int main() {
             (total_elements + threadsPerBlock.x - 1) / threadsPerBlock.x,
             (NUM_QUERIES + threadsPerBlock.y - 1) / threadsPerBlock.y,
             1
+            );
+        int shared_bytes_needed = 5 * (256 + QUERY_LENGTH) * sizeof(float);
+
+        cudaFuncSetAttribute(
+            search_multiple_patterns_kernel,
+            cudaFuncAttributeMaxDynamicSharedMemorySize,
+            shared_bytes_needed
         );
 
         auto time_start = std::chrono::high_resolution_clock::now();
-        search_multiple_patterns_kernel<<<blocksPerGrid, threadsPerBlock>>>(
+        search_multiple_patterns_kernel<<<blocksPerGrid, threadsPerBlock, shared_bytes_needed>>>(
             d_h1, d_h2, d_h3, d_h4, d_h5,
-            d_results,
+            d_results_c1, d_results_c2, d_results_c3, d_results_c4, d_results_c5,
             total_elements
         );
         cudaDeviceSynchronize();
         auto time_end = std::chrono::high_resolution_clock::now();
-        double time = std::chrono::duration<double, std::milli>(time_end - time_start).count();
+        double time = std::chrono::duration<double>(time_end - time_start).count();
         total_time += time;
 
-        cudaMemcpy(h_results.data(), d_results, total_elements * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_results_c1.data(), d_results_c1, total_elements * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_results_c2.data(), d_results_c2, total_elements * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_results_c3.data(), d_results_c3, total_elements * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_results_c4.data(), d_results_c4, total_elements * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_results_c5.data(), d_results_c5, total_elements * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
+
+        const std::vector<float>* per_channel_results[5] = {
+            &h_results_c1,
+            &h_results_c2,
+            &h_results_c3,
+            &h_results_c4,
+            &h_results_c5
+        };
 
         for (int q = 0; q < NUM_QUERIES; q++) {
             int offset = q * total_elements;
+            for (int c = 0; c < 5; ++c) {
+                const int qc = q * 5 + c;
+                const std::vector<float>& channel_results = *per_channel_results[c];
 
-            for (int i = 0; i <= total_elements - QUERY_LENGTH; i++) {
-                if (h_results[offset + i] < min_sads[q]) {
-                    min_sads[q] = h_results[offset + i];
-                    best_indices[q] = i;
+                for (int i = 0; i <= total_elements - QUERY_LENGTH; i++) {
+                    if (channel_results[offset + i] < min_sads[qc]) {
+                        min_sads[qc] = channel_results[offset + i];
+                        best_indices[qc] = i;
+                    }
                 }
             }
         }
 
-        for (int i = 0; i < NUM_QUERIES; ++i) {
+        for (int i = 0; i < NUM_QUERIES * 5; ++i) {
             if (best_indices[i] != last_best_indices[i] && last_best_indices[i] != -1) {
-                std::cout << "ERRORE: index for the " << i+1 << "-th query is different. Different result from the expected\n";
-                last_best_indices[i] = best_indices[i];
+                const int query_id = i / 5;
+                const int channel_id = i % 5;
+                std::cout << "ERRORE: index for query " << query_id + 1
+                          << " e channel C" << channel_id + 1
+                          << " is different from previous run\n";
             }
+            last_best_indices[i] = best_indices[i];
         }
     }
 
-    std::cout << "Average time in " << NUM_RUNS << " runs: " << total_time / NUM_RUNS << "ms" << std::endl;
+    std::cout << "Average time in " << NUM_RUNS << " runs: " << total_time / NUM_RUNS << "s" << std::endl;
     std::cout << "\n========================= SEARCH RESULTS =========================" << std::endl;
 
     for (int q = 0; q < NUM_QUERIES; q++) {
         std::cout << "[ QUERY " << q + 1 << " ]" << std::endl;
-        std::cout << "  -> Match migliore all'indice: " << best_indices[q] << std::endl;
-        std::cout << "  -> Valore di SAD (errore)   : " << min_sads[q] << std::endl;
+        for (int c = 0; c < 5; ++c) {
+            const int qc = q * 5 + c;
+            std::cout << "  - Serie C" << c + 1
+                      << " -> indice: " << best_indices[qc]
+                      << ", SAD: " << min_sads[qc] << std::endl;
+        }
         std::cout << "------------------------------------------------------------------" << std::endl;
     }
 
     cudaFree(d_h1);    cudaFree(d_h2);    cudaFree(d_h3);    cudaFree(d_h4);    cudaFree(d_h5);
-    cudaFree(d_results);
+    cudaFree(d_results_c1); cudaFree(d_results_c2); cudaFree(d_results_c3); cudaFree(d_results_c4); cudaFree(d_results_c5);
 
     return 0;
 }

@@ -6,7 +6,6 @@
 #include <numeric>
 #include <sstream>
 
-#include "sequential.h"
 
 TimeSeriesSoA LoadAndPrepareData(const std::string& filepath) {
     std::ifstream file(filepath);
@@ -93,3 +92,13 @@ bool SameResults(const SADResults &a, const SADResults &b, float atol) {
 
     return true;
 }
+
+float portable_uniform(std::mt19937& eng) {
+    uint32_t raw_value = eng();
+
+    uint32_t max_value = std::mt19937::max(); // Per mt19937 è 4294967295
+    float normalized = static_cast<float>(raw_value) / static_cast<float>(max_value);
+
+    return normalized * 15.0f;
+}
+

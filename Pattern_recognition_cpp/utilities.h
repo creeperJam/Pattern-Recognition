@@ -4,6 +4,7 @@
 #include <vector>
 #include <iostream>
 #include <algorithm>
+#include <random>
 
 struct TimeSeriesSoA {
     std::vector<float> historical_data_c1;
@@ -35,5 +36,6 @@ TimeSeriesSoA LoadAndPrepareData(const std::string& filepath);
 
 double Average(const std::vector<double> &values);
 bool SameResults(const SADResults &a, const SADResults &b, float atol = 1e-4f);
+float portable_uniform(std::mt19937& eng);
 
 #endif // UTILITIES_H

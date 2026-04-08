@@ -6,7 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -ffast-math -march=native -fopenmp")
 
-find_package(OpenMP REQUIRED)
+#find_package(OpenMP REQUIRED)
+
+add_compile_definitions("PROJECT_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
 
 add_executable(pattern_recognition
     main.cpp
@@ -16,4 +18,4 @@ add_executable(pattern_recognition
         utilities.h
 )
 
-target_link_libraries(pattern_recognition PRIVATE OpenMP::OpenMP_CXX)
+#target_link_libraries(pattern_recognition PRIVATE OpenMP::OpenMP_CXX)
