@@ -4,25 +4,27 @@
 #include <limits>
 
 SADResults SequentialSADSearch(const TimeSeriesSoA &time_series, const std::vector<std::vector<float> > &queries) {
-    constexpr std::size_t SERIES_NUMBER = 5;
-    const std::size_t n_points = time_series.historical_data_c1.size();
+    constexpr std::size_t TIME_SERIES_NUMBER = 5;
+    const std::size_t n_points = time_series.timeseries_c1.size();
     const std::size_t query_len = queries[0].size();
 
     const std::size_t total_windows = n_points - query_len + 1;
 
     SADResults result;
-    result.best_indices.assign(SERIES_NUMBER, 0);
-    result.best_sads.assign(SERIES_NUMBER, std::numeric_limits<float>::max());
+    result.best_indices.assign(TIME_SERIES_NUMBER, 0);
+    result.best_sads.assign(TIME_SERIES_NUMBER, std::numeric_limits<float>::max());
 
-    const std::vector<float> *const time_series_ptrs[5] = {
-        &time_series.historical_data_c1,
-        &time_series.historical_data_c2,
-        &time_series.historical_data_c3,
-        &time_series.historical_data_c4,
-        &time_series.historical_data_c5
+    //we use pointers so we don't load millions of floats every time
+    const std::vector<float> *const time_series_ptrs[TIME_SERIES_NUMBER] = {
+        &time_series.timeseries_c1,
+        &time_series.timeseries_c2,
+        &time_series.timeseries_c3,
+        &time_series.timeseries_c4,
+        &time_series.timeseries_c5
     };
 
-    for (std::size_t s = 0; s < SERIES_NUMBER; ++s) {
+    // the following is a simple sliding window
+    for (std::size_t s = 0; s < TIME_SERIES_NUMBER; ++s) {
         int best_idx = 0;
         float best_sad = std::numeric_limits<float>::max();
 

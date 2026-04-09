@@ -1,24 +1,24 @@
 #ifndef UTILITIES_H
 #define UTILITIES_H
+#include <fstream>
+#include <iostream>
+#include <random>
 #include <string>
 #include <vector>
-#include <iostream>
-#include <fstream>
-#include <random>
 
 struct TimeSeriesSoA {
-    std::vector<float> historical_data_c1;
-    std::vector<float> historical_data_c2;
-    std::vector<float> historical_data_c3;
-    std::vector<float> historical_data_c4;
-    std::vector<float> historical_data_c5;
+    std::vector<float> timeseries_c1;
+    std::vector<float> timeseries_c2;
+    std::vector<float> timeseries_c3;
+    std::vector<float> timeseries_c4;
+    std::vector<float> timeseries_c5;
 
     TimeSeriesSoA(const int size) {
-        historical_data_c1.reserve(size);
-        historical_data_c2.reserve(size);
-        historical_data_c3.reserve(size);
-        historical_data_c4.reserve(size);
-        historical_data_c5.reserve(size);
+        timeseries_c1.reserve(size);
+        timeseries_c2.reserve(size);
+        timeseries_c3.reserve(size);
+        timeseries_c4.reserve(size);
+        timeseries_c5.reserve(size);
     }
 };
 
@@ -59,6 +59,8 @@ bool SameResults(const SADResults &a, const SADResults &b, float atol = 1e-3f);
 
 float PortableUniformDistribution(std::mt19937 &eng);
 
-void SaveStats(std::ofstream &csv_file, const std::string &algo, int query_size, int query_count, int num_threads, RunStats &stats, int RUNS);
+bool SaveStats(const std::string &algo, int query_size, int query_count, int num_threads, RunStats &stats, int RUNS);
 
-#endif // UTILITIES_H
+bool SaveResults(std::vector<SADResults> &results, int NUM_QUERIES, int QUERY_LENGTH, int num_threads);
+
+#endif  // UTILITIES_H
