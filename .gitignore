@@ -1,7 +1,10 @@
 .idea
+.vscode
 cmake-build-debug/
 cmake-build-release/
+build/
 Pattern_recognition_cu/output/*
 main-FFT.cu
 
+run_stats.csv
 realistic_data.csv
