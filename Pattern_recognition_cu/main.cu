@@ -54,7 +54,6 @@ int main() {
     cudaMemcpy(d_c4, loaded_data.c4.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_c5, loaded_data.c5.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
 
-
     cudaMemcpyToSymbol(c_q1, all_queries_c1.data(), TOTAL_QUERY_ELEMENTS * sizeof(float));
     cudaMemcpyToSymbol(c_q2, all_queries_c2.data(), TOTAL_QUERY_ELEMENTS * sizeof(float));
     cudaMemcpyToSymbol(c_q3, all_queries_c3.data(), TOTAL_QUERY_ELEMENTS * sizeof(float));
@@ -99,12 +98,12 @@ int main() {
     std::array<float, NUM_QUERIES * CHANNEL_COUNT> min_sads;
     std::array<int, NUM_QUERIES * CHANNEL_COUNT> best_indices;
     std::array<double, NUM_RUNS> wall_times;
+    std::array<double, NUM_RUNS> gpu_times;
     last_best_indices.fill(-1);
 
     for (int i = 0; i < NUM_RUNS; ++i) {
         best_indices.fill(-1);
         min_sads.fill(std::numeric_limits<float>::max());
-
 
         dim3 threadsPerBlock(BLOCK_SIZE, 1, 1);
         dim3 blocksPerGrid(
@@ -120,15 +119,27 @@ int main() {
             shared_bytes_needed
         );
 
+        // cudaEvent_t start, stop;
+        // cudaEventCreate(&start);
+        // cudaEventCreate(&stop);
         auto time_start = std::chrono::high_resolution_clock::now();
+        // cudaEventRecord(start);
         SearchMultiplePatternsKernel<<<blocksPerGrid, threadsPerBlock, shared_bytes_needed>>>(
             d_c1, d_c2, d_c3, d_c4, d_c5,
             d_results_c1, d_results_c2, d_results_c3, d_results_c4, d_results_c5,
             total_elements
         );
+        // cudaEventRecord(stop);
+        // cudaEventSynchronize(stop);
         cudaDeviceSynchronize();
         auto time_end = std::chrono::high_resolution_clock::now();
         wall_times[i] = std::chrono::duration<double>(time_end - time_start).count();
+        // float milliseconds = 0;
+        // cudaEventElapsedTime(&milliseconds, start, stop);
+        // gpu_times[i] = milliseconds;
+
+        // cudaEventDestroy(start);
+        // cudaEventDestroy(stop);
 
         cudaMemcpy(h_results_c1.data(), d_results_c1, total_elements * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_results_c2.data(), d_results_c2, total_elements * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
@@ -177,7 +188,7 @@ int main() {
         return -1;
     }
 
-    if (!SaveStats(wall_times)) {
+    if (!SaveStats(wall_times, gpu_times)) {
         std::cout << "ERROR: There was an error during the saving of the time statistics.\n";
         return -1;
     }

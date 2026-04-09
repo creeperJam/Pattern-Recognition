@@ -96,31 +96,23 @@ bool PrintAndSaveResults(const std::array<int, NUM_QUERIES * CHANNEL_COUNT>& bes
             std::filesystem::create_directory(output);
         }
         output /= "output_cuda.csv";
-        std::ifstream file_read(output);
-
-        if (file_read.is_open()) {
-            if (file_read.peek() == std::ifstream::traits_type::eof())
-                ss << "QueryNum,QueryLength,ChannelNum,MinIndex,SAD\n";
-            file_read.close();
-        } else {
-            ss << "QueryNum,QueryLength,ChannelNum,MinIndex,SAD\n";
-        }
+        ss << "QueryNum,QueryLength,ChannelNum,MinIndex,SAD\n";
 
         std::cout << "\n========================= SEARCH RESULTS =========================\n";
 
-        for (int q = 0; q < NUM_QUERIES; q++) {
-            std::cout << "[ QUERY " << q + 1 << " ]\n";
-            for (int c = 0; c < 5; ++c) {
-                const int qc = q * 5 + c;
-                std::cout << "  - Serie C" << c + 1
-                          << " -> indice: " << best_indices[qc]
-                          << ", SAD: " << min_sads[qc] << "\n";
-                ss << q+1 << "," << QUERY_LENGTH << "," << c+1 << "," << best_indices[qc] << "," << min_sads[qc] << "\n";
+        for (int query = 0; query < NUM_QUERIES; ++query) {
+            std::cout << "[ QUERY " << query + 1 << " ]\n";
+            for (int channel = 0; channel < 5; ++channel) {
+                const int query_channel = query * 5 + channel;
+                std::cout << "  - Serie C" << channel + 1
+                          << " -> indice: " << best_indices[query_channel]
+                          << ", SAD: " << min_sads[query_channel] << "\n";
+                ss << query+1 << "," << QUERY_LENGTH << "," << channel+1 << "," << best_indices[query_channel] << "," << min_sads[query_channel] << "\n";
 
             }
             std::cout << "------------------------------------------------------------------\n";
         }
-        std::ofstream file_write = std::ofstream(output, std::ios::app);
+        std::ofstream file_write = std::ofstream(output);
         file_write << ss.str();
         file_write.close();
 
@@ -132,7 +124,7 @@ bool PrintAndSaveResults(const std::array<int, NUM_QUERIES * CHANNEL_COUNT>& bes
     return true;
 }
 
-bool SaveStats(const std::array<double, NUM_RUNS>& wall_times) {
+bool SaveStats(const std::array<double, NUM_RUNS>& wall_times, const std::array<double, NUM_RUNS>& gpu_times) {
     std::filesystem::path output(std::string(PROJECT_SOURCE_DIR) + "/output");
     if (!std::filesystem::exists(output)) {
         std::filesystem::create_directory(output);
@@ -154,7 +146,7 @@ bool SaveStats(const std::array<double, NUM_RUNS>& wall_times) {
         return false;
     }
     if (empty_file) {
-        file_write << "NumQueries,QueryLength,WallMean_s,WalLMax_s,WallMin_s,WallStd_s\n";
+        file_write << "NumQueries,QueryLength,WallMean_s,WalLMax_s,WallMin_s,WallStd_s,GpuMean_ms,GpuMax_ms,GpuMin_ms,GpuStd_ms\n";
     }
 
     const double wall_max = *std::ranges::max_element(wall_times);
@@ -171,7 +163,21 @@ bool SaveStats(const std::array<double, NUM_RUNS>& wall_times) {
     wall_std /= NUM_RUNS - 1;
     wall_std = std::sqrt(wall_std);
 
-    file_write << NUM_QUERIES << "," << QUERY_LENGTH << "," << wall_mean << "," << wall_max << "," << wall_min << "," << wall_std << "\n";
+    const double gpu_max = *std::ranges::max_element(gpu_times);
+    const double gpu_min = *std::ranges::min_element(gpu_times);
+    double gpu_std = 0.0f;
+    double gpu_mean = 0.0f;
+    for (auto& gpu_time : gpu_times) {
+        gpu_mean += gpu_time;
+    }
+    gpu_mean /= NUM_RUNS;
+    for (auto& gpu_time : gpu_times) {
+        gpu_std += (gpu_time - gpu_mean) * (gpu_time - gpu_mean);
+    }
+    gpu_std /= NUM_RUNS - 1;
+    gpu_std = std::sqrt(gpu_std);
+
+    file_write << NUM_QUERIES << "," << QUERY_LENGTH << "," << wall_mean << "," << wall_max << "," << wall_min << "," << wall_std << "," << gpu_mean << "," << gpu_max << "," << gpu_min << "," << gpu_std << "\n";
 
     file_write.close();
     return true;
@@ -183,5 +189,5 @@ float PortableUniformGenerator(std::mt19937& eng) {
     uint32_t max_value = std::mt19937::max();
     float normalized = static_cast<float>(raw_value) / static_cast<float>(max_value);
 
-    return normalized * 15.0f;
+    return (normalized * 30.0f) - 15.0f;
 }
