@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 #include <iostream>
-#include <algorithm>
+#include <fstream>
 #include <random>
 
 struct TimeSeriesSoA {
@@ -32,10 +32,33 @@ struct SADResults {
     std::vector<float> best_sads;
 };
 
-TimeSeriesSoA LoadAndPrepareData(const std::string& filepath);
+struct RunStats {
+    std::vector<double> wall_ms;
+    std::vector<double> cpu_ms;
+
+    double wall_avg;
+    double cpu_avg;
+
+    double wall_min;
+    double cpu_min;
+    double wall_max;
+    double cpu_max;
+
+    double wall_std;
+    double cpu_std;
+
+    RunStats(const int RUNS) : wall_ms(RUNS), cpu_ms(RUNS) {
+    }
+};
+
+TimeSeriesSoA LoadAndPrepareData(const std::string &filepath);
 
 double Average(const std::vector<double> &values);
-bool SameResults(const SADResults &a, const SADResults &b, float atol = 1e-4f);
-float portable_uniform(std::mt19937& eng);
+
+bool SameResults(const SADResults &a, const SADResults &b, float atol = 1e-3f);
+
+float PortableUniformDistribution(std::mt19937 &eng);
+
+void SaveStats(std::ofstream &csv_file, const std::string &algo, int query_size, int query_count, int num_threads, RunStats &stats, int RUNS);
 
 #endif // UTILITIES_H
