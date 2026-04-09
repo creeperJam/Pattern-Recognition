@@ -1,171 +1,166 @@
+#include <array>
 #include <chrono>
-#include <cmath>
+#include <ctime>
+#include <fstream>
 #include <iostream>
 #include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "utilities.h"
 #include "parallel.h"
 #include "sequential.h"
+#include "utilities.h"
 
-int main(int argc, char **argv) {
-    try {
-        std::string filepath = std::string(PROJECT_SOURCE_DIR) + "/../realistic_data.csv";
-        constexpr int RUNS = 5;
-        constexpr int THREADS = 16;
-        constexpr int QUERY_LENGTH = 819;
-        constexpr int QUERIES_PER_TIME_SERIES = 4;
+int main() {
+  try {
+    std::string filepath = std::string(PROJECT_SOURCE_DIR) + "/../realistic_data.csv";
+    std::string stats_path = std::string(PROJECT_SOURCE_DIR) + "/run_stats.csv";
 
-        std::cout << "Loading data from " << filepath << "...\n";
-        TimeSeriesSoA loaded_data = LoadAndPrepareData(filepath);
+    constexpr int RUNS = 10;
+    constexpr int MAX_QUERIES_PER_TIME_SERIES = 4;
+    constexpr std::size_t n_series = 5;
+    const std::array query_lengths = {128, 256, 512, 819};
+    const std::array thread_counts = {1, 2, 4, 8, 16};
 
-        constexpr std::size_t n_series = 5;
-        const std::size_t n_points = loaded_data.historical_data_c1.size();
-        std::cout << "Loaded " << n_series << " time series with " << n_points << " points each.\n";
+    std::cout << "Loading data from " << filepath << "...\n";
+    TimeSeriesSoA loaded_data = LoadAndPrepareData(filepath);
 
-        if (n_points < static_cast<std::size_t>(QUERY_LENGTH)) {
-            throw std::runtime_error("Query length is greater than series length.");
-        }
+    const std::size_t n_points = loaded_data.historical_data_c1.size();
+    std::cout << "Loaded " << n_series << " time series with " << n_points << " points each.\n";
 
-        // in each vector store all the queries that will be executed on that time series
-        std::vector<float> all_queries_c1(QUERY_LENGTH * QUERIES_PER_TIME_SERIES);
-        std::vector<float> all_queries_c2(QUERY_LENGTH * QUERIES_PER_TIME_SERIES);
-        std::vector<float> all_queries_c3(QUERY_LENGTH * QUERIES_PER_TIME_SERIES);
-        std::vector<float> all_queries_c4(QUERY_LENGTH * QUERIES_PER_TIME_SERIES);
-        std::vector<float> all_queries_c5(QUERY_LENGTH * QUERIES_PER_TIME_SERIES);
-
-
-        std::mt19937 generator{42};
-        std::normal_distribution<float> noise{0.0f, 15.0f};
-
-        std::cout << "Generating " << QUERIES_PER_TIME_SERIES * 5 << " queries from actual data...\n";
-        //TODO: usare nomi variabili più chiari
-        std::vector<std::size_t> ground_truth_indices(QUERIES_PER_TIME_SERIES);
-        for (int q = 0; q < QUERIES_PER_TIME_SERIES; ++q) {
-            std::size_t safe_idx = (q + 1) * (n_points / (QUERIES_PER_TIME_SERIES + 2));
-
-            if (safe_idx + QUERY_LENGTH > n_points) {
-                safe_idx = 0;
-            }
-            ground_truth_indices[q] = safe_idx;
-            std::cout << "  -> Query " << q << " extracted starting at index " << safe_idx << "\n";
-        }
-
-        for (int q = 0; q < QUERIES_PER_TIME_SERIES; ++q) {
-            std::size_t base_idx = ground_truth_indices[q];
-            std::size_t offset = static_cast<std::size_t>(q) * static_cast<std::size_t>(QUERY_LENGTH);
-
-            for (int i = 0; i < QUERY_LENGTH; ++i) {
-                all_queries_c1[offset + i] = loaded_data.historical_data_c1[base_idx + i] + portable_uniform(generator);
-                all_queries_c2[offset + i] = loaded_data.historical_data_c2[base_idx + i] + portable_uniform(generator);
-                all_queries_c3[offset + i] = loaded_data.historical_data_c3[base_idx + i] + portable_uniform(generator);
-                all_queries_c4[offset + i] = loaded_data.historical_data_c4[base_idx + i] + portable_uniform(generator);
-                all_queries_c5[offset + i] = loaded_data.historical_data_c5[base_idx + i] + portable_uniform(generator);
-            }
-        }
-
-        // lambda to get all queries with specific IDX
-        auto get_all_queries = [&](int query_idx) {
-            const std::size_t offset = static_cast<std::size_t>(query_idx) * static_cast<std::size_t>(QUERY_LENGTH);
-
-            std::vector<std::vector<float> > queries(5);
-            queries[0] = std::vector<float>(all_queries_c1.begin() + offset, all_queries_c1.begin() + offset + QUERY_LENGTH);
-            queries[1] = std::vector<float>(all_queries_c2.begin() + offset, all_queries_c2.begin() + offset + QUERY_LENGTH);
-            queries[2] = std::vector<float>(all_queries_c3.begin() + offset, all_queries_c3.begin() + offset + QUERY_LENGTH);
-            queries[3] = std::vector<float>(all_queries_c4.begin() + offset, all_queries_c4.begin() + offset + QUERY_LENGTH);
-            queries[4] = std::vector<float>(all_queries_c5.begin() + offset, all_queries_c5.begin() + offset + QUERY_LENGTH);
-
-            return queries;
-        };
-
-        std::cout << "Performing sequential warm-up runs...\n";
-        for (int i = 0; i < RUNS/2; ++i) {
-            for (int q = 0; q < QUERIES_PER_TIME_SERIES; ++q) {
-                const auto queries = get_all_queries(q);
-                SequentialSADSearch(loaded_data, queries);
-            }
-        }
-
-
-        std::cout << "Running sequential tests (" << RUNS << " iterations)...\n";
-        std::vector<double> seq_times;
-        seq_times.reserve(RUNS);
-        std::vector<SADResults> seq_results_by_query(QUERIES_PER_TIME_SERIES);
-
-        for (int i = 0; i < RUNS; ++i) {
-            const auto t0 = std::chrono::high_resolution_clock::now();
-            for (int q = 0; q < QUERIES_PER_TIME_SERIES; ++q) {
-                const auto queries = get_all_queries(q);
-                seq_results_by_query[q] = SequentialSADSearch(loaded_data, queries);
-            }
-            const auto t1 = std::chrono::high_resolution_clock::now();
-            seq_times.push_back(std::chrono::duration<double>(t1 - t0).count());
-        }
-
-        std::cout << "Performing parallel warm-up runs...\n";
-        for (int q = 0; q < QUERIES_PER_TIME_SERIES; ++q) {
-            const auto queries = get_all_queries(q);
-            ParallelSADSearch(loaded_data, queries, THREADS);
-        }
-
-        std::cout << "Running parallel tests (" << RUNS << " iterations)...\n";
-        std::vector<double> par_times;
-        par_times.reserve(RUNS);
-        std::vector<SADResults> par_results_by_query(QUERIES_PER_TIME_SERIES);
-
-        for (int i = 0; i < RUNS; ++i) {
-            const auto t0 = std::chrono::high_resolution_clock::now();
-            for (int q = 0; q < QUERIES_PER_TIME_SERIES; ++q) {
-                const auto queries = get_all_queries(q);
-                par_results_by_query[q] = ParallelSADSearch(loaded_data, queries, THREADS);
-            }
-            const auto t1 = std::chrono::high_resolution_clock::now();
-            par_times.push_back(std::chrono::duration<double>(t1 - t0).count());
-        }
-
-        bool all_results_match = true;
-        for (int q = 0; q < QUERIES_PER_TIME_SERIES; ++q) {
-            if (!SameResults(seq_results_by_query[q], par_results_by_query[q])) {
-                all_results_match = false;
-                break;
-            }
-        }
-
-        const double avg_seq = Average(seq_times);
-        const double avg_par = Average(par_times);
-        const double speedup = (avg_par > 0.0) ? (avg_seq / avg_par) : 0.0;
-
-        std::cout << "\n--- Results ---\n";
-        std::cout << "Executed " << QUERIES_PER_TIME_SERIES << " queries on all time series.\n";
-        std::cout << "Results match across implementations: " << (all_results_match ? "true" : "false") << "\n";
-        std::cout << "\n========================= SEQUENTIAL SEARCH RESULTS =========================" << std::endl;
-        for (int q = 0; q < QUERIES_PER_TIME_SERIES; ++q) {
-            std::cout << "[ QUERY " << q + 1 << " ]" << std::endl;
-            for (std::size_t s = 0; s < n_series; ++s) {
-                std::cout << "  - Serie C" << s + 1 << " -> indice: " << seq_results_by_query[q].best_indices[s] << ", SAD: " << seq_results_by_query[q].best_sads[s] << std::endl;
-            }
-            std::cout << "------------------------------------------------------------------" << std::endl;
-        }
-
-        std::cout << "\n========================= PARALLEL SEARCH RESULTS =========================" << std::endl;
-        for (int q = 0; q < QUERIES_PER_TIME_SERIES; ++q) {
-            std::cout << "[ QUERY " << q + 1 << " ]" << std::endl;
-            for (std::size_t s = 0; s < n_series; ++s) {
-                std::cout << "  - Serie C" << s + 1 << " -> indice: " << par_results_by_query[q].best_indices[s]
-                          << ", SAD: " << par_results_by_query[q].best_sads[s] << std::endl;
-            }
-            std::cout << "------------------------------------------------------------------" << std::endl;
-        }
-
-        std::cout << "Average Sequential Time: " << avg_seq << " seconds\n";
-        std::cout << "Average Parallel Time:   " << avg_par << " seconds\n";
-        std::cout << "Calculated Speedup:      " << speedup << "x\n";
-
-        return 0;
-    } catch (const std::exception &ex) {
-        std::cerr << "Error: " << ex.what() << "\n";
-        return 1;
+    if (n_points == 0) {
+      throw std::runtime_error("Loaded data is empty.");
     }
+
+    std::ofstream csv_file(stats_path);
+    if (!csv_file.is_open()) {
+      throw std::runtime_error("Cannot open output stats file: " + stats_path);
+    }
+
+    csv_file << "query_length,num_queries,algo,num_threads,wall_min_ms,wall_max_ms,wall_avg_ms,wall_std_ms,cpu_min_ms,cpu_max_ms,cpu_avg_ms,cpu_std_ms\n";
+
+    std::mt19937 generator{42};
+
+    for (const int query_length : query_lengths) {
+      if (n_points < static_cast<std::size_t>(query_length)) {
+        std::cout << "Skipping query_length=" << query_length << " (series too short).\n";
+        continue;
+      }
+
+      // START OF QUERY GENERATION
+      std::vector<float> all_queries_c1(static_cast<std::size_t>(query_length) * MAX_QUERIES_PER_TIME_SERIES);
+      std::vector<float> all_queries_c2(static_cast<std::size_t>(query_length) * MAX_QUERIES_PER_TIME_SERIES);
+      std::vector<float> all_queries_c3(static_cast<std::size_t>(query_length) * MAX_QUERIES_PER_TIME_SERIES);
+      std::vector<float> all_queries_c4(static_cast<std::size_t>(query_length) * MAX_QUERIES_PER_TIME_SERIES);
+      std::vector<float> all_queries_c5(static_cast<std::size_t>(query_length) * MAX_QUERIES_PER_TIME_SERIES);
+
+      std::vector<std::size_t> ground_truth_indices(MAX_QUERIES_PER_TIME_SERIES);
+      for (int q = 0; q < MAX_QUERIES_PER_TIME_SERIES; ++q) {
+        std::size_t safe_idx = static_cast<std::size_t>(q + 1) * (n_points / static_cast<std::size_t>(MAX_QUERIES_PER_TIME_SERIES + 2));
+        if (safe_idx + static_cast<std::size_t>(query_length) > n_points) {
+          safe_idx = 0;
+        }
+        ground_truth_indices[q] = safe_idx;
+      }
+
+      for (int q = 0; q < MAX_QUERIES_PER_TIME_SERIES; ++q) {
+        const std::size_t base_idx = ground_truth_indices[q];
+        const std::size_t offset = static_cast<std::size_t>(q) * static_cast<std::size_t>(query_length);
+
+        for (int i = 0; i < query_length; ++i) {
+          all_queries_c1[offset + static_cast<std::size_t>(i)] = loaded_data.historical_data_c1[base_idx + static_cast<std::size_t>(i)] + PortableUniformDistribution(generator);
+          all_queries_c2[offset + static_cast<std::size_t>(i)] = loaded_data.historical_data_c2[base_idx + static_cast<std::size_t>(i)] + PortableUniformDistribution(generator);
+          all_queries_c3[offset + static_cast<std::size_t>(i)] = loaded_data.historical_data_c3[base_idx + static_cast<std::size_t>(i)] + PortableUniformDistribution(generator);
+          all_queries_c4[offset + static_cast<std::size_t>(i)] = loaded_data.historical_data_c4[base_idx + static_cast<std::size_t>(i)] + PortableUniformDistribution(generator);
+          all_queries_c5[offset + static_cast<std::size_t>(i)] = loaded_data.historical_data_c5[base_idx + static_cast<std::size_t>(i)] + PortableUniformDistribution(generator);
+        }
+      }
+      // END OF QUERY GENERATION
+
+      // lambda to extract queries for a given query index from the big query buffers
+      auto get_query = [&](int query_idx) {
+        const std::size_t offset = static_cast<std::size_t>(query_idx) * static_cast<std::size_t>(query_length);
+        std::vector<std::vector<float>> queries(5);
+        queries[0] = std::vector(all_queries_c1.begin() + static_cast<long long>(offset), all_queries_c1.begin() + static_cast<long long>(offset + static_cast<std::size_t>(query_length)));
+        queries[1] = std::vector(all_queries_c2.begin() + static_cast<long long>(offset), all_queries_c2.begin() + static_cast<long long>(offset + static_cast<std::size_t>(query_length)));
+        queries[2] = std::vector(all_queries_c3.begin() + static_cast<long long>(offset), all_queries_c3.begin() + static_cast<long long>(offset + static_cast<std::size_t>(query_length)));
+        queries[3] = std::vector(all_queries_c4.begin() + static_cast<long long>(offset), all_queries_c4.begin() + static_cast<long long>(offset + static_cast<std::size_t>(query_length)));
+        queries[4] = std::vector(all_queries_c5.begin() + static_cast<long long>(offset), all_queries_c5.begin() + static_cast<long long>(offset + static_cast<std::size_t>(query_length)));
+        return queries;
+      };
+
+      std::vector<std::vector<std::vector<float>>> queries_pool(MAX_QUERIES_PER_TIME_SERIES);
+      for (int q = 0; q < MAX_QUERIES_PER_TIME_SERIES; ++q) {
+        queries_pool[q] = get_query(q);
+      }
+
+      for (int query_count = 1; query_count <= MAX_QUERIES_PER_TIME_SERIES; ++query_count) {
+        std::cout << "Running sequential config: query_length=" << query_length << ", num_queries=" << query_count << "\n";
+
+        // 2 WARMUP RUNS
+        std::cout << "  -> Running warmup runs...\n";
+        for (int run = 0; run < 2; ++run) {
+          for (int q = 0; q < query_count; ++q) {
+            SequentialSADSearch(loaded_data, queries_pool[q]);
+          }
+        }
+
+        RunStats seq_stats(RUNS);
+        for (int run_idx = 0; run_idx < RUNS; ++run_idx) {
+          const std::clock_t cpu_start = std::clock();
+          const auto wall_start = std::chrono::steady_clock::now();
+
+          for (int q = 0; q < query_count; ++q) {
+            SequentialSADSearch(loaded_data, queries_pool[q]);
+          }
+
+          const auto wall_end = std::chrono::steady_clock::now();
+          const std::clock_t cpu_end = std::clock();
+
+          seq_stats.wall_ms[run_idx] = std::chrono::duration<double, std::milli>(wall_end - wall_start).count();
+          seq_stats.cpu_ms[run_idx] = 1000.0 * static_cast<double>(cpu_end - cpu_start) / static_cast<double>(CLOCKS_PER_SEC);
+        }
+        SaveStats(csv_file, "sequential", query_length, query_count, 0, seq_stats, RUNS);
+        std::cout << "  -> wall_min=" << seq_stats.wall_min << " ms, wall_avg=" << seq_stats.wall_avg << " ms, wall_max=" << seq_stats.wall_max << " ms, wall_std=" << seq_stats.wall_std << " ms\n";
+
+        for (const int thread_count : thread_counts) {
+          // 2 WARMUP RUNS
+          std::cout << "Running parallel config: query_length=" << query_length << ", num_queries=" << query_count << ", threads=" << thread_count << "\n";
+
+          std::cout << "  -> Running warmup runs...\n";
+          for (int run = 0; run < 2; ++run) {
+            for (int q = 0; q < query_count; ++q) {
+              ParallelSADSearch(loaded_data, queries_pool[q], thread_count);
+            }
+          }
+
+          RunStats par_stats(RUNS);
+          for (int run_idx = 0; run_idx < RUNS; ++run_idx) {
+            const std::clock_t cpu_start = std::clock();
+            const auto wall_start = std::chrono::steady_clock::now();
+
+            for (int q = 0; q < query_count; ++q) {
+              ParallelSADSearch(loaded_data, queries_pool[q], thread_count);
+            }
+
+            const auto wall_end = std::chrono::steady_clock::now();
+            const std::clock_t cpu_end = std::clock();
+
+            par_stats.wall_ms[run_idx] = std::chrono::duration<double, std::milli>(wall_end - wall_start).count();
+            par_stats.cpu_ms[run_idx] = 1000.0 * static_cast<double>(cpu_end - cpu_start) / static_cast<double>(CLOCKS_PER_SEC);
+          }
+          SaveStats(csv_file, "parallel", query_length, query_count, thread_count, par_stats, RUNS);
+          std::cout << "  -> wall_min=" << par_stats.wall_min << " ms, wall_avg=" << par_stats.wall_avg << " ms, wall_max=" << par_stats.wall_max << " ms, wall_std=" << par_stats.wall_std << " ms\n";
+        }
+      }
+    }
+
+    std::cout << "Benchmark completed. Stats saved to " << stats_path << "\n";
+
+    return 0;
+  } catch (const std::exception& ex) {
+    std::cerr << "Error: " << ex.what() << "\n";
+    return 1;
+  }
 }

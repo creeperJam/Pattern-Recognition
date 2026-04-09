@@ -2,10 +2,9 @@
 
 #include <cmath>
 #include <limits>
-#include <vector>
 
 SADResults SequentialSADSearch(const TimeSeriesSoA &time_series, const std::vector<std::vector<float> > &queries) {
-    const std::size_t SERIES_NUMBER = 5;
+    constexpr std::size_t SERIES_NUMBER = 5;
     const std::size_t n_points = time_series.historical_data_c1.size();
     const std::size_t query_len = queries[0].size();
 
@@ -13,9 +12,9 @@ SADResults SequentialSADSearch(const TimeSeriesSoA &time_series, const std::vect
 
     SADResults result;
     result.best_indices.assign(SERIES_NUMBER, 0);
-    result.best_sads.assign(SERIES_NUMBER, std::numeric_limits<float>::infinity());
+    result.best_sads.assign(SERIES_NUMBER, std::numeric_limits<float>::max());
 
-    const std::vector<float> *const series_ptrs[5] = {
+    const std::vector<float> *const time_series_ptrs[5] = {
         &time_series.historical_data_c1,
         &time_series.historical_data_c2,
         &time_series.historical_data_c3,
@@ -25,9 +24,9 @@ SADResults SequentialSADSearch(const TimeSeriesSoA &time_series, const std::vect
 
     for (std::size_t s = 0; s < SERIES_NUMBER; ++s) {
         int best_idx = 0;
-        float best_sad = std::numeric_limits<float>::infinity();
+        float best_sad = std::numeric_limits<float>::max();
 
-        const std::vector<float> &current_series = *(series_ptrs[s]);
+        const std::vector<float> &current_series = *(time_series_ptrs[s]);
         const std::vector<float> &current_query = queries[s];
 
         for (std::size_t start = 0; start < total_windows; ++start) {
