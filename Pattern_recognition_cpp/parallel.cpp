@@ -40,7 +40,7 @@ SADResults ParallelSADSearch(const TimeSeriesSoA &time_series, const std::vector
 
     SADResults result;
     result.best_indices.assign(n_series, 0);
-    result.best_sads.assign(n_series, std::numeric_limits<float>::infinity());
+    result.best_sads.assign(n_series, std::numeric_limits<float>::max());
 
     if (n_threads > 0) {
         omp_set_num_threads(n_threads);
@@ -56,7 +56,7 @@ SADResults ParallelSADSearch(const TimeSeriesSoA &time_series, const std::vector
     };
 
     for (std::size_t s = 0; s < n_series; ++s) {
-        float global_best_sad = std::numeric_limits<float>::infinity();
+        float global_best_sad = std::numeric_limits<float>::max();
         int global_best_idx = 0;
 
         const float *const series_data = series_ptrs[s]->data();
@@ -65,7 +65,7 @@ SADResults ParallelSADSearch(const TimeSeriesSoA &time_series, const std::vector
         //initial fork, each thread will have 2 private variables
 #pragma omp parallel
         {
-            float local_best_sad = std::numeric_limits<float>::infinity();
+            float local_best_sad = std::numeric_limits<float>::max();
             int local_best_idx = 0;
 
 #pragma omp for schedule(dynamic, 4096)
