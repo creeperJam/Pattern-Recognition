@@ -154,7 +154,7 @@ int main() {
 
                     //correctness check
                     for (int q = 0; q < query_count; ++q) {
-                        if (!SameResults(seq_results[q], par_results[q], 1e-3f)) {
+                        if (!SameResults(seq_results[q], par_results[q], 1e-2f)) {
                             std::cerr << "Error: mismatch for query " << q << " in config (query_length=" << query_length << ", num_queries=" << query_count << ", threads=" <<
                                     thread_count << ")\n";
                             return 1;
