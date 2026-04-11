@@ -4,7 +4,7 @@
 
 #include "utilities.h"
 
-bool ReadFile(const std::string& filepath, DataSoA& loaded_data) {
+bool ReadFile(const std::string& filepath, TimeSeriesSoA& loaded_data) {
     std::ifstream file(filepath);
 
     if (!file.is_open()) {
@@ -23,27 +23,27 @@ bool ReadFile(const std::string& filepath, DataSoA& loaded_data) {
 
         if (std::getline(ss, token, ';')) {
             if (!token.empty()) {
-                loaded_data.c1.push_back(std::stof(token));
+                loaded_data.timeseries_c1.push_back(std::stof(token));
             }
         }
         if (std::getline(ss, token, ';')) {
             if (!token.empty()) {
-                loaded_data.c2.push_back(std::stof(token));
+                loaded_data.timeseries_c2.push_back(std::stof(token));
             }
         }
         if (std::getline(ss, token, ';')) {
             if (!token.empty()) {
-                loaded_data.c3.push_back(std::stof(token));
+                loaded_data.timeseries_c3.push_back(std::stof(token));
             }
         }
         if (std::getline(ss, token, ';')) {
             if (!token.empty()) {
-                loaded_data.c4.push_back(std::stof(token));
+                loaded_data.timeseries_c4.push_back(std::stof(token));
             }
         }
         if (std::getline(ss, token, ';')) {
             if (!token.empty()) {
-                loaded_data.c5.push_back(std::stof(token));
+                loaded_data.timeseries_c5.push_back(std::stof(token));
             }
         }
     }
@@ -54,7 +54,7 @@ bool ReadFile(const std::string& filepath, DataSoA& loaded_data) {
 
 bool GenerateQueries(
     std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c1, std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c2, std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c3,
-    std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c4, std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c5, const DataSoA& loaded_data, const int total_elements)
+    std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c4, std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c5, const TimeSeriesSoA& loaded_data, const int total_elements)
 {
     try {
         std::mt19937 generator{SEED_GENERATOR};
@@ -75,11 +75,11 @@ bool GenerateQueries(
             std::size_t offset = static_cast<std::size_t>(q) * static_cast<std::size_t>(QUERY_LENGTH);
 
             for (int i = 0; i < QUERY_LENGTH; ++i) {
-                all_queries_c1[offset + i] = loaded_data.c1[base_idx + i] + PortableUniformGenerator(generator);
-                all_queries_c2[offset + i] = loaded_data.c2[base_idx + i] + PortableUniformGenerator(generator);
-                all_queries_c3[offset + i] = loaded_data.c3[base_idx + i] + PortableUniformGenerator(generator);
-                all_queries_c4[offset + i] = loaded_data.c4[base_idx + i] + PortableUniformGenerator(generator);
-                all_queries_c5[offset + i] = loaded_data.c5[base_idx + i] + PortableUniformGenerator(generator);
+                all_queries_c1[offset + i] = loaded_data.timeseries_c1[base_idx + i] + PortableUniformGenerator(generator);
+                all_queries_c2[offset + i] = loaded_data.timeseries_c2[base_idx + i] + PortableUniformGenerator(generator);
+                all_queries_c3[offset + i] = loaded_data.timeseries_c3[base_idx + i] + PortableUniformGenerator(generator);
+                all_queries_c4[offset + i] = loaded_data.timeseries_c4[base_idx + i] + PortableUniformGenerator(generator);
+                all_queries_c5[offset + i] = loaded_data.timeseries_c5[base_idx + i] + PortableUniformGenerator(generator);
             }
         }
     } catch (...) {
@@ -146,7 +146,7 @@ bool SaveStats(const std::array<double, NUM_RUNS>& wall_times, const std::array<
         return false;
     }
     if (empty_file) {
-        file_write << "NumQueries,QueryLength,WallMean_s,WalLMax_s,WallMin_s,WallStd_s,GpuMean_ms,GpuMax_ms,GpuMin_ms,GpuStd_ms\n";
+        file_write << "BlockSize,UnrollSize,NumQueries,QueryLength,WallMean_ms,WalLMax_ms,WallMin_ms,WallStd_ms,GpuMean_ms,GpuMax_ms,GpuMin_ms,GpuStd_ms\n";
     }
 
     const double wall_max = *std::ranges::max_element(wall_times);
@@ -177,7 +177,7 @@ bool SaveStats(const std::array<double, NUM_RUNS>& wall_times, const std::array<
     gpu_std /= NUM_RUNS - 1;
     gpu_std = std::sqrt(gpu_std);
 
-    file_write << NUM_QUERIES << "," << QUERY_LENGTH << "," << wall_mean << "," << wall_max << "," << wall_min << "," << wall_std << "," << gpu_mean << "," << gpu_max << "," << gpu_min << "," << gpu_std << "\n";
+    file_write << BLOCK_SIZE << "," << UNROLL_SIZE << "," << NUM_QUERIES << "," << QUERY_LENGTH << "," << wall_mean << "," << wall_max << "," << wall_min << "," << wall_std << "," << gpu_mean << "," << gpu_max << "," << gpu_min << "," << gpu_std << "\n";
 
     file_write.close();
     return true;

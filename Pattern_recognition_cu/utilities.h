@@ -19,6 +19,13 @@ constexpr int NUM_WARMUP = 10;
 constexpr int CHANNEL_COUNT = 5;
 constexpr int SEED_GENERATOR = 42;
 
+// The value of these two constants were chosen based on the performances measured after some tests.
+// We tested the following size respectively:
+// - {64, 128, 256, 512, 1024} (1024 is the maximum allowed)
+// - {NONE, 4, 8, 16, 32}
+constexpr int BLOCK_SIZE = 512;
+constexpr int UNROLL_SIZE = 8;
+
 #include <array>
 #include <iostream>
 #include <fstream>
@@ -27,45 +34,79 @@ constexpr int SEED_GENERATOR = 42;
 #include <chrono>
 #include <vector>
 #include <limits>
-
 #include <filesystem>
 
-struct DataSoA {
-    std::vector<float> c1;
-    std::vector<float> c2;
-    std::vector<float> c3;
-    std::vector<float> c4;
-    std::vector<float> c5;
+struct TimeSeriesSoA {
+    std::vector<float> timeseries_c1;
+    std::vector<float> timeseries_c2;
+    std::vector<float> timeseries_c3;
+    std::vector<float> timeseries_c4;
+    std::vector<float> timeseries_c5;
 
-    explicit DataSoA(int size) {
-        c1.reserve(size);
-        c2.reserve(size);
-        c3.reserve(size);
-        c4.reserve(size);
-        c5.reserve(size);
+    explicit TimeSeriesSoA(int size) {
+        timeseries_c1.reserve(size);
+        timeseries_c2.reserve(size);
+        timeseries_c3.reserve(size);
+        timeseries_c4.reserve(size);
+        timeseries_c5.reserve(size);
     }
 };
 
-// Returns a random generated float between 0 and 15.
-// This is not the same as 'std::uniform_real_distribution' because the generated
-// numbers are always the same, even on different environments, if the seed is the same.
+/**
+ * @brief Generates a pseudo-random number from -15 to +15 based on a chosen seed.
+ *
+ * @details This was needed since all float RNG can generate different values on different environments. This makes it
+ * harder to test the program on different machines or even compilator, since results vary.
+ * To overcome this we use a standardized number generator like std::mt19937 to get an integer and with simple math get
+ * always the same numbers in a range no matter the environment.
+ *
+ * @param eng The engine used to generate the numbers passed by reference
+ * @returns The generated value of type float
+ */
 float PortableUniformGenerator(std::mt19937& eng);
-// Returns a bool that either confirms that the reading went well or there was an error.
-// Reads all the contents of a .csv file and saves each column into the loaded_data structure
-bool ReadFile(const std::string& filepath, DataSoA& loaded_data);
-// Returns a bool that either confirms that the generation went well or there was an error.
-// Extracts a number of elements from the loaded data based on the amount of data and the number of queries.
-// After extracting the indexes it extracts the value, adds a noise using the random float generator and saves it
-// to the query array
+/**
+ * @brief Reads all the time series data from a specified file
+ *
+ * @param filepath The path of the .csv file to read data from
+ * @param loaded_data The data structured where the data will be put (passed by reference)
+ * @return A boolean value that indicates whether everything went well or there were any errors during the process.
+ */
+bool ReadFile(const std::string& filepath, TimeSeriesSoA& loaded_data);
+/**
+ * @brief Generates all the queries based on the input data for testing purposes
+ *
+ * @details While having random queries is a way to test, checking whether the results are correct or not can be hard.
+ * To fix this problem we extract the exact values saved in the structure with the time series values and add a random
+ * noise to each using the PortableUniformGenerator, getting values that are guaranteed to be close to the actual data
+ * without having to check for averages, minimum or maximums.
+ *
+ * @param all_queries_c1 Array containing all the queries for the first channel
+ * @param all_queries_c2 Array containing all the queries for the second channel
+ * @param all_queries_c3 Array containing all the queries for the third channel
+ * @param all_queries_c4 Array containing all the queries for the fourth channel
+ * @param all_queries_c5 Array containing all the queries for the fifth channel
+ * @param loaded_data Structure containing all the data of the time series
+ * @param total_elements Amount of data extracted from the time series
+ * @return A boolean value that indicates whether everything went well or there were any errors during the process.
+ */
 bool GenerateQueries(
     std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c1, std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c2, std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c3,
-    std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c4, std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c5, const DataSoA& loaded_data, int total_elements);
-// Returns a bool that either confirms that the print and save went well or there was an error.
-// It takes as input the best indices and the corresponding SADs and prints the to console first and saves the same
-// output to a .csv file
+    std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c4, std::array<float, TOTAL_QUERY_ELEMENTS>& all_queries_c5, const TimeSeriesSoA& loaded_data, int total_elements);
+/**
+ * @brief Prints to console and saves to csv file the best SADs found for each query and the corresponding index
+ *
+ * @param best_indices Array containing the indices of the best SADs values of each query for each channel
+ * @param min_sads Array containing the lowest SADs values of each query for each channel
+ * @return A boolean value that indicates whether everything went well or there were any errors during the process.
+ */
 bool PrintAndSaveResults(const std::array<int, NUM_QUERIES * CHANNEL_COUNT>& best_indices, const std::array<float, NUM_QUERIES * CHANNEL_COUNT>& min_sads);
-// Returns a bool that either confirms that the time log save went well or there was an error.
-// It takes as input all the wall times, calculates the mean, min, max and std times and save all of them to a .csv file.
+/**
+ * @brief Calculates the mean, min, max and std times for both wall and gpu time and saves them to a csv file
+ *
+ * @param wall_times Array containing the wall time of each run
+ * @param gpu_times Array containing the GPU time of each run
+ * @return A boolean value that indicates whether everything went well or there were any errors during the process.
+ */
 bool SaveStats(const std::array<double, NUM_RUNS>& wall_times, const std::array<double, NUM_RUNS>& gpu_times);
 
 #endif //PATTERN_RECOGNITION_CU_COMMON_H

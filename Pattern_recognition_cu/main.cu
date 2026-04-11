@@ -7,7 +7,7 @@ __constant__ float c_q4[TOTAL_QUERY_ELEMENTS];
 __constant__ float c_q5[TOTAL_QUERY_ELEMENTS];
 
 int main() {
-    DataSoA loaded_data(2'000'000);
+    TimeSeriesSoA loaded_data(2'000'000);
     std::string filepath = std::string(PROJECT_SOURCE_DIR) + "/../realistic_data.csv";
 
     std::cout << "Loading data from: " << filepath << "\n";
@@ -15,7 +15,7 @@ int main() {
         std::cerr << "ERROR: unable to open file " << filepath << "\n";
         return -1;
     }
-    int total_elements = loaded_data.c1.size();
+    int total_elements = loaded_data.timeseries_c1.size();
     std::cout << "Loaded " << total_elements << " data.\n";
 
     if (total_elements == 0) return 1;
@@ -26,56 +26,57 @@ int main() {
     std::array<float, TOTAL_QUERY_ELEMENTS> all_queries_c4{};
     std::array<float, TOTAL_QUERY_ELEMENTS> all_queries_c5{};
 
-    std::cout << "Generating " << NUM_QUERIES << " realistic noisy queries from ground-truth data...\n";
+    std::cout << "Generating " << NUM_QUERIES << " queries from actual data...\n";
 
     if (!GenerateQueries(all_queries_c1, all_queries_c2, all_queries_c3, all_queries_c4, all_queries_c5, loaded_data, total_elements)) {
-        std::cerr << "ERROR: There was an error during the generation of the random queries.\n";
+        std::cerr << "ERROR: There was an error during the generation of the queries.\n";
         return 1;
     }
 
     float *d_c1, *d_c2, *d_c3, *d_c4, *d_c5;
     float *d_results_c1, *d_results_c2, *d_results_c3, *d_results_c4, *d_results_c5;
 
+    // Allocates the needed memory in the GPU's VRAM for all the data channels
     cudaMalloc(&d_c1, total_elements * sizeof(float));
     cudaMalloc(&d_c2, total_elements * sizeof(float));
     cudaMalloc(&d_c3, total_elements * sizeof(float));
     cudaMalloc(&d_c4, total_elements * sizeof(float));
     cudaMalloc(&d_c5, total_elements * sizeof(float));
+    // Allocates the needed memory to contain the results for all the queries
+    cudaMalloc(&d_results_c1, (total_elements - QUERY_LENGTH + 1) * sizeof(float) * NUM_QUERIES);
+    cudaMalloc(&d_results_c2, (total_elements - QUERY_LENGTH + 1) * sizeof(float) * NUM_QUERIES);
+    cudaMalloc(&d_results_c3, (total_elements - QUERY_LENGTH + 1) * sizeof(float) * NUM_QUERIES);
+    cudaMalloc(&d_results_c4, (total_elements - QUERY_LENGTH + 1) * sizeof(float) * NUM_QUERIES);
+    cudaMalloc(&d_results_c5, (total_elements - QUERY_LENGTH + 1) * sizeof(float) * NUM_QUERIES);
+    // Copies the loaded data from the RAM to the GPU VRAM
+    cudaMemcpy(d_c1, loaded_data.timeseries_c1.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_c2, loaded_data.timeseries_c2.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_c3, loaded_data.timeseries_c3.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_c4, loaded_data.timeseries_c4.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_c5, loaded_data.timeseries_c5.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
 
-    cudaMalloc(&d_results_c1, total_elements * sizeof(float) * NUM_QUERIES);
-    cudaMalloc(&d_results_c2, total_elements * sizeof(float) * NUM_QUERIES);
-    cudaMalloc(&d_results_c3, total_elements * sizeof(float) * NUM_QUERIES);
-    cudaMalloc(&d_results_c4, total_elements * sizeof(float) * NUM_QUERIES);
-    cudaMalloc(&d_results_c5, total_elements * sizeof(float) * NUM_QUERIES);
-
-    cudaMemcpy(d_c1, loaded_data.c1.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_c2, loaded_data.c2.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_c3, loaded_data.c3.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_c4, loaded_data.c4.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_c5, loaded_data.c5.data(), total_elements * sizeof(float), cudaMemcpyHostToDevice);
-
+    // Copies the queries data to device constant memory
     cudaMemcpyToSymbol(c_q1, all_queries_c1.data(), TOTAL_QUERY_ELEMENTS * sizeof(float));
     cudaMemcpyToSymbol(c_q2, all_queries_c2.data(), TOTAL_QUERY_ELEMENTS * sizeof(float));
     cudaMemcpyToSymbol(c_q3, all_queries_c3.data(), TOTAL_QUERY_ELEMENTS * sizeof(float));
     cudaMemcpyToSymbol(c_q4, all_queries_c4.data(), TOTAL_QUERY_ELEMENTS * sizeof(float));
     cudaMemcpyToSymbol(c_q5, all_queries_c5.data(), TOTAL_QUERY_ELEMENTS * sizeof(float));
 
+    // Definition of amount of threads per block per grid
+    dim3 threads_per_block(BLOCK_SIZE, 1, 1);
+    dim3 grid_blocks(
+        (total_elements + threads_per_block.x - 1) / threads_per_block.x,
+        (NUM_QUERIES + threads_per_block.y - 1) / threads_per_block.y,
+        1
+        );
+
+    // Defining the needed size of the SHARED memory of the GPU
+    int shared_bytes_needed = CHANNEL_COUNT * (BLOCK_SIZE + QUERY_LENGTH) * sizeof(float);
+    // Asking the CUDA driver to allow using more than 48kb of shared memory (since GPU might have more)
+    cudaFuncSetAttribute(SearchMultiplePatternsKernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shared_bytes_needed );
+
     for (int i = 0; i < NUM_WARMUP; i++) {
-        dim3 threadsPerBlock(BLOCK_SIZE, 1, 1);
-        dim3 blocksPerGrid(
-            (total_elements + threadsPerBlock.x - 1) / threadsPerBlock.x,
-            (NUM_QUERIES + threadsPerBlock.y - 1) / threadsPerBlock.y,
-            1
-        );
-        int shared_bytes_needed = 5 * (BLOCK_SIZE + QUERY_LENGTH) * sizeof(float);
-
-        cudaFuncSetAttribute(
-            SearchMultiplePatternsKernel,
-            cudaFuncAttributeMaxDynamicSharedMemorySize,
-            shared_bytes_needed
-        );
-
-        SearchMultiplePatternsKernel<<<blocksPerGrid, threadsPerBlock, shared_bytes_needed>>>(
+        SearchMultiplePatternsKernel<<<grid_blocks, threads_per_block, shared_bytes_needed>>>(
             d_c1, d_c2, d_c3, d_c4, d_c5,
             d_results_c1, d_results_c2, d_results_c3, d_results_c4, d_results_c5,
             total_elements);
@@ -84,16 +85,17 @@ int main() {
             std::cerr << "CUDA ERROR: " << cudaGetErrorString(err) << "\n";
             return -1;
         }
-
+        // Pauses the CPU, making it wait for the GPU to finish all the work is has
         cudaDeviceSynchronize();
     }
+    // vectors that will contain the SADs of every channel
+    std::vector<float> results_c1((total_elements - QUERY_LENGTH + 1) * NUM_QUERIES);
+    std::vector<float> results_c2((total_elements - QUERY_LENGTH + 1) * NUM_QUERIES);
+    std::vector<float> results_c3((total_elements - QUERY_LENGTH + 1) * NUM_QUERIES);
+    std::vector<float> results_c4((total_elements - QUERY_LENGTH + 1) * NUM_QUERIES);
+    std::vector<float> results_c5((total_elements - QUERY_LENGTH + 1) * NUM_QUERIES);
 
-    std::vector<float> h_results_c1(total_elements * NUM_QUERIES);
-    std::vector<float> h_results_c2(total_elements * NUM_QUERIES);
-    std::vector<float> h_results_c3(total_elements * NUM_QUERIES);
-    std::vector<float> h_results_c4(total_elements * NUM_QUERIES);
-    std::vector<float> h_results_c5(total_elements * NUM_QUERIES);
-
+    // This array is used to validate each execution with the previous one
     std::array<int, NUM_QUERIES * CHANNEL_COUNT> last_best_indices;
     std::array<float, NUM_QUERIES * CHANNEL_COUNT> min_sads;
     std::array<int, NUM_QUERIES * CHANNEL_COUNT> best_indices;
@@ -105,59 +107,47 @@ int main() {
         best_indices.fill(-1);
         min_sads.fill(std::numeric_limits<float>::max());
 
-        dim3 threadsPerBlock(BLOCK_SIZE, 1, 1);
-        dim3 blocksPerGrid(
-            (total_elements + threadsPerBlock.x - 1) / threadsPerBlock.x,
-            (NUM_QUERIES + threadsPerBlock.y - 1) / threadsPerBlock.y,
-            1
-            );
-        int shared_bytes_needed = 5 * (BLOCK_SIZE + QUERY_LENGTH) * sizeof(float);
-
-        cudaFuncSetAttribute(
-            SearchMultiplePatternsKernel,
-            cudaFuncAttributeMaxDynamicSharedMemorySize,
-            shared_bytes_needed
-        );
-
-        // cudaEvent_t start, stop;
-        // cudaEventCreate(&start);
-        // cudaEventCreate(&stop);
+        cudaEvent_t start, stop;
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
         auto time_start = std::chrono::high_resolution_clock::now();
-        // cudaEventRecord(start);
-        SearchMultiplePatternsKernel<<<blocksPerGrid, threadsPerBlock, shared_bytes_needed>>>(
+        cudaEventRecord(start);
+        SearchMultiplePatternsKernel<<<grid_blocks, threads_per_block, shared_bytes_needed>>>(
             d_c1, d_c2, d_c3, d_c4, d_c5,
             d_results_c1, d_results_c2, d_results_c3, d_results_c4, d_results_c5,
             total_elements
         );
-        // cudaEventRecord(stop);
-        // cudaEventSynchronize(stop);
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
         cudaDeviceSynchronize();
         auto time_end = std::chrono::high_resolution_clock::now();
-        wall_times[i] = std::chrono::duration<double>(time_end - time_start).count();
-        // float milliseconds = 0;
-        // cudaEventElapsedTime(&milliseconds, start, stop);
-        // gpu_times[i] = milliseconds;
+        wall_times[i] = std::chrono::duration<double, std::milli>(time_end - time_start).count();
+        float gpu_milliseconds = 0;
+        cudaEventElapsedTime(&gpu_milliseconds, start, stop);
+        gpu_times[i] = gpu_milliseconds;
 
-        // cudaEventDestroy(start);
-        // cudaEventDestroy(stop);
+        cudaEventDestroy(start);
+        cudaEventDestroy(stop);
 
-        cudaMemcpy(h_results_c1.data(), d_results_c1, total_elements * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_results_c2.data(), d_results_c2, total_elements * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_results_c3.data(), d_results_c3, total_elements * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_results_c4.data(), d_results_c4, total_elements * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_results_c5.data(), d_results_c5, total_elements * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
+        // Copies the results from the GPU's VRAM to the RAM
+        cudaMemcpy(results_c1.data(), d_results_c1, (total_elements - QUERY_LENGTH + 1) * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(results_c2.data(), d_results_c2, (total_elements - QUERY_LENGTH + 1) * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(results_c3.data(), d_results_c3, (total_elements - QUERY_LENGTH + 1) * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(results_c4.data(), d_results_c4, (total_elements - QUERY_LENGTH + 1) * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(results_c5.data(), d_results_c5, (total_elements - QUERY_LENGTH + 1) * NUM_QUERIES * sizeof(float), cudaMemcpyDeviceToHost);
 
-        const std::vector<float>* per_channel_results[5] = {
-            &h_results_c1,
-            &h_results_c2,
-            &h_results_c3,
-            &h_results_c4,
-            &h_results_c5
+        const std::vector<float>* per_channel_results[CHANNEL_COUNT] = {
+            &results_c1,
+            &results_c2,
+            &results_c3,
+            &results_c4,
+            &results_c5
         };
 
-        for (int query = 0; query < NUM_QUERIES; query++) {
-            int offset = query * total_elements;
-            for (int c = 0; c < 5; ++c) {
+        // Cycles thruogh all the results of each query of each channel, looking for the lowest SAD and saving the index
+        for (int query = 0; query < NUM_QUERIES; ++query) {
+            int offset = query * (total_elements - QUERY_LENGTH + 1);
+            for (int c = 0; c < CHANNEL_COUNT; ++c) {
                 const int qc = query * 5 + c;
                 const std::vector<float>& channel_results = *per_channel_results[c];
 
@@ -170,6 +160,7 @@ int main() {
             }
         }
 
+        // Error checking. Compares the current run results to the previous to make sure they are always the same
         for (int i = 0; i < NUM_QUERIES * 5; ++i) {
             if (best_indices[i] != last_best_indices[i] && last_best_indices[i] != -1) {
                 const int query_id = i / 5;
@@ -182,7 +173,6 @@ int main() {
         }
     }
 
-    // std::cout << "Average time in " << NUM_RUNS << " runs: " << total_time / NUM_RUNS << "s\n";
     if (!PrintAndSaveResults(best_indices, min_sads)) {
         std::cout << "ERROR: There was an error during the printing or saving of the results.\n";
         return -1;
@@ -205,7 +195,6 @@ __global__ void SearchMultiplePatternsKernel(
     int total_elements)
 {
     extern __shared__ float s_data[];
-    constexpr int BLOCK_SIZE = 256;
     constexpr int SHARED_SIZE = BLOCK_SIZE + QUERY_LENGTH;
 
     float* s_h1 = s_data;
@@ -245,7 +234,7 @@ __global__ void SearchMultiplePatternsKernel(
         float sad_c5 = 0.0f;
         int q_start = tid_y * QUERY_LENGTH;
 
-        #pragma unroll
+        #pragma unroll UNROLL_SIZE
         for (int i = 0; i < QUERY_LENGTH; i++) {
             sad_c1 += fabs(s_h1[threadIdx.x + i] - c_q1[q_start + i]);
             sad_c2 += fabs(s_h2[threadIdx.x + i] - c_q2[q_start + i]);
@@ -254,7 +243,7 @@ __global__ void SearchMultiplePatternsKernel(
             sad_c5 += fabs(s_h5[threadIdx.x + i] - c_q5[q_start + i]);
         }
 
-        const int out_idx = tid_y * total_elements + tid_x;
+        const int out_idx = tid_y * (total_elements - QUERY_LENGTH + 1) + tid_x;
         d_results_c1[out_idx] = sad_c1;
         d_results_c2[out_idx] = sad_c2;
         d_results_c3[out_idx] = sad_c3;
