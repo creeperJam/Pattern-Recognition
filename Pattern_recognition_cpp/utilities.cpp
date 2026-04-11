@@ -85,11 +85,6 @@ bool SameResults(const SADResults &a, const SADResults &b, float atol) {
     return true;
 }
 
-/**
- * Generates a random float in the range [-15.0, 15.0] using the provided random engine. This function is designed to be portable across different platforms and compilers, ensuring consistent random number generation.
- * @param eng The random engine to use.
- * @return A random float in the range [-15.0, 15.0].
- */
 float PortableUniformDistribution(std::mt19937 &eng) {
     const uint32_t raw_value = eng();
 
