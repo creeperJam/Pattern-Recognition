@@ -13,7 +13,6 @@
 #include "utilities.h"
 
 std::string filepath = std::string(PROJECT_SOURCE_DIR) + "/../realistic_data.csv";
-std::string stats_path = std::string(PROJECT_SOURCE_DIR) + "/run_stats.csv";
 
 constexpr int RUNS = 10;
 constexpr int WARMUP_RUNS = 2;
@@ -165,7 +164,7 @@ int main() {
             }
         }
 
-        std::cout << "Benchmark completed. Stats saved to " << stats_path << "\n";
+        std::cout << "Benchmark completed.\n";
 
         return 0;
     } catch (const std::exception &ex) {
