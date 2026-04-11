@@ -3,8 +3,10 @@
 cmake-build-debug/
 cmake-build-release/
 build/
-Pattern_recognition_cu/output/*
+Pattern_recognition_cu/output/
 main-FFT.cu
+NSight-compute/
+Pattern_recognition_cpp/output/
 
 run_stats.csv
 realistic_data.csv
