@@ -12,15 +12,11 @@ SADResults ParallelSADSearch(const TimeSeriesSoA &time_series, const std::vector
     const std::size_t n_points = time_series.timeseries_c1.size();
     const std::size_t query_len = queries[0].size();
 
-    const std::size_t total_windows = n_points - query_len + 1;
+    const auto total_windows = static_cast<long long>(n_points - query_len + 1);
 
     SADResults result;
     result.best_indices.assign(TIME_SERIES_NUMBER, 0);
     result.best_sads.assign(TIME_SERIES_NUMBER, std::numeric_limits<float>::max());
-
-    if (n_threads > 0) {
-        omp_set_num_threads(n_threads);
-    }
 
     //we use pointers so we don't load millions of floats every time
     const std::vector<float> *const series_ptrs[TIME_SERIES_NUMBER] = {
@@ -39,15 +35,15 @@ SADResults ParallelSADSearch(const TimeSeriesSoA &time_series, const std::vector
         const float *const query_data = queries[s].data();
 
         // initial fork, a number of threads is spawned and each will have 2 private variables
-#pragma omp parallel
+#pragma omp parallel default(none) num_threads(n_threads) shared(global_best_sad, global_best_idx, series_data, query_data, total_windows, query_len)
         {
             float local_best_sad = std::numeric_limits<float>::max();
             int local_best_idx = 0;
 
             // each thread will pickup a chunk of windows
-#pragma omp for schedule(dynamic, 256) //TODO: this can be tuned to achieve best performance
+#pragma omp for schedule(dynamic, 256)
             // iterate over all possible starting windows in the current time series
-            for (long long start = 0; start < static_cast<long long>(total_windows); ++start) {
+            for (long long start = 0; start < total_windows; ++start) {
                 float sad = 0.0f;
 
                 // we calculate SAD using chunks to still be able to use SIMD
