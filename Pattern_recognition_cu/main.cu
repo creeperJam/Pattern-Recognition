@@ -161,15 +161,15 @@ int main() {
         }
 
         // Error checking. Compares the current run results to the previous to make sure they are always the same
-        for (int i = 0; i < NUM_QUERIES * 5; ++i) {
-            if (best_indices[i] != last_best_indices[i] && last_best_indices[i] != -1) {
-                const int query_id = i / 5;
-                const int channel_id = i % 5;
+        for (int j = 0; j < NUM_QUERIES * 5; ++j) {
+            if (best_indices[j] != last_best_indices[j] && last_best_indices[j] != -1) {
+                const int query_id = j / 5;
+                const int channel_id = j % 5;
                 std::cout << "ERROR: index for query " << query_id + 1
                           << " and channel C" << channel_id + 1
                           << " is different from previous run\n";
             }
-            last_best_indices[i] = best_indices[i];
+            last_best_indices[j] = best_indices[j];
         }
     }
 

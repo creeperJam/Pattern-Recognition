@@ -1,9 +1,5 @@
-//
-// Created by albi0 on 08/04/2026.
-//
-
-#ifndef PATTERN_RECOGNITION_CU_COMMON_H
-#define PATTERN_RECOGNITION_CU_COMMON_H
+#ifndef COMMON_H
+#define COMMON_H
 
 // My RTX 4060 has 64 KiB of constant memory, meaning that query length and number have to respect the following limit:
 // QUERY_LENGTH * NUM_QUERIES * sizeof(float) * COLUMNS_NUMBER(5 in this case) <= 65536, so:
@@ -109,4 +105,4 @@ bool PrintAndSaveResults(const std::array<int, NUM_QUERIES * CHANNEL_COUNT>& bes
  */
 bool SaveStats(const std::array<double, NUM_RUNS>& wall_times, const std::array<double, NUM_RUNS>& gpu_times);
 
-#endif //PATTERN_RECOGNITION_CU_COMMON_H
+#endif

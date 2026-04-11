@@ -1,7 +1,3 @@
-//
-// Created by albi0 on 08/04/2026.
-//
-
 #include "utilities.h"
 
 bool ReadFile(const std::string& filepath, TimeSeriesSoA& loaded_data) {
